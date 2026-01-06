@@ -1,4 +1,4 @@
-import feedparser
+import requestsimport feedparser
 import json
 import os
 import time
@@ -74,10 +74,17 @@ def send_email_alert(new_items):
 
 # --- MAIN AGENT LOOP ---
 
+# ... (Keep your existing configuration and helper functions) ...
+
 def check_craigslist():
     print(f"🕵️  Agent starting scan...")
     seen_ids = load_memory()
     new_finds = []
+
+    # 1. DEFINE HEADERS (This makes us look like a Chrome Browser)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
 
     for region in REGIONS:
         for query in QUERIES:
@@ -85,32 +92,38 @@ def check_craigslist():
             rss_url = f"https://{region}.craigslist.org/search/sss?query={clean_query}&format=rss"
             
             try:
-                feed = feedparser.parse(rss_url)
+                # 2. FETCH WITH REQUESTS FIRST
+                response = requests.get(rss_url, headers=headers, timeout=10)
                 
-                for entry in feed.entries:
-                    post_id = entry.link
+                # Only parse if the request was successful
+                if response.status_code == 200:
+                    # Pass the raw XML content to feedparser
+                    feed = feedparser.parse(response.content)
                     
-                    if post_id not in seen_ids:
-                        # Store clean data for the email
-                        item_data = {
-                            "title": entry.title,
-                            "link": entry.link,
-                            "region": region
-                        }
-                        
-                        print(f"Found: {entry.title}")
-                        seen_ids.append(post_id)
-                        new_finds.append(item_data)
+                    for entry in feed.entries:
+                        post_id = entry.link
+                        if post_id not in seen_ids:
+                            item_data = {
+                                "title": entry.title,
+                                "link": entry.link,
+                                "region": region
+                            }
+                            print(f"Found: {entry.title}")
+                            seen_ids.append(post_id)
+                            new_finds.append(item_data)
+                else:
+                    print(f"⚠️ Blocked or failed for {region} (Status: {response.status_code})")
                         
             except Exception as e:
                 print(f"Error checking {region}: {e}")
             
-            time.sleep(1) # Be polite to servers
+            time.sleep(2) # Increased sleep slightly to be safer
 
-    # Update memory
     save_memory(seen_ids)
     
-    # If we found anything, email it
+    # 3. FORCE A DEBUG EMAIL (Optional: Uncomment next line to test email even if list is empty)
+    # new_finds.append({"title": "Test Item", "link": "http://google.com", "region": "Test"})
+
     if new_finds:
         send_email_alert(new_finds)
     else:
